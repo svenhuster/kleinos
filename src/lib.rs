@@ -109,10 +109,10 @@ pub mod vga {
 
     #[derive(Clone, Copy)]
     #[repr(transparent)]
-    struct CharColor(u8);
+    pub struct CharColor(u8);
 
     impl CharColor {
-        const fn new(foreground: Color, background: Color) -> Self {
+        pub const fn new(foreground: Color, background: Color) -> Self {
             Self((background as u8) << 4 | foreground as u8)
         }
     }
@@ -126,15 +126,9 @@ pub mod vga {
 
     const _: () = assert!(core::mem::size_of::<ScreenChar>() == 2);
 
-    impl ScreenChar {
-        pub const fn new(character: u8, fg: Color, bg: Color) -> Self {
-            let color = CharColor::new(fg, bg);
-            Self { character, color }
-        }
-    }
-
     pub struct VgaScreen {
         column: usize,
+        color_code: CharColor,
         buffer: *mut [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
     }
 
@@ -142,6 +136,7 @@ pub mod vga {
         pub const fn new() -> Self {
             Self {
                 column: 0,
+                color_code: CharColor::new(Color::LightGray, Color::Black),
                 buffer: BUFFER,
             }
         }
@@ -153,18 +148,24 @@ pub mod vga {
         }
     }
 
-    impl VgaScreen {
-        pub fn write_str(&mut self, s: &[u8]) {
-            for byte in s {
-                self.write_byte(*byte);
+    impl core::fmt::Write for VgaScreen {
+        fn write_str(&mut self, s: &str) -> Result<(), core::fmt::Error> {
+            for byte in s.bytes() {
+                self.write_byte(byte);
             }
+            Ok(())
         }
+    }
 
+    impl VgaScreen {
         pub fn clear_line(&mut self) {
-            for _ in self.column..BUFFER_WIDTH {
-                self.write_byte(b' ');
+            if self.column < BUFFER_WIDTH {
+                let col = self.column;
+                for _ in self.column..BUFFER_WIDTH {
+                    self.write_byte(b' ');
+                }
+                self.column = col;
             }
-            self.column = 0;
         }
 
         pub fn new_line(&mut self) {
@@ -188,13 +189,13 @@ pub mod vga {
             if byte == b'\n' {
                 self.new_line();
             } else {
-                let ch = ScreenChar::new(byte, Color::LightGray, Color::Black);
-                self.write(ch, 0, self.column);
+                self.write(byte, self.color_code, 0, self.column);
                 self.column += 1;
             }
         }
 
-        pub fn write(&mut self, ch: ScreenChar, row: usize, col: usize) {
+        pub fn write(&mut self, byte: u8, color: CharColor, row: usize, col: usize) {
+            let ch = ScreenChar{character: byte, color};
             // Writing starts from the bottom left of the screen
             let row = BUFFER_HEIGHT-row-1;
             unsafe {write_volatile(&mut (*self.buffer)[row][col], ch)};
