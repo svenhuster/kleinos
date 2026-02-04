@@ -19,9 +19,9 @@ bootloader::entry_point!(kernel_main);
 
 pub fn kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
     let mut screen = vga::VgaScreen::new();
-    for (col, ch) in b"Hello, Rustaceans!".iter().enumerate() {
-        screen.write(ScreenChar::new(*ch, Color::LightGray, Color::Black), 0, col);
-    }
+
+    screen.write_str(b"Hello, Rustaceans!");
+    screen.new_line();
 
     busy_spin(100_000_000);
 

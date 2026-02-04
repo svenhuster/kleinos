@@ -80,8 +80,11 @@ pub mod qemu {
 }
 
 pub mod vga {
+    use core::ptr::{read_volatile, write_volatile};
+
     const BUFFER_HEIGHT: usize = 25;
     const BUFFER_WIDTH: usize = 80;
+    const BUFFER: *mut [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT] = 0xb8000 as *mut _;
 
     #[derive(Clone, Copy)]
     #[repr(u8)]
@@ -131,13 +134,15 @@ pub mod vga {
     }
 
     pub struct VgaScreen {
-        buffer: &'static mut [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
+        column: usize,
+        buffer: *mut [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
     }
 
     impl VgaScreen {
-        pub fn new() -> Self {
+        pub const fn new() -> Self {
             Self {
-                buffer: unsafe {&mut *(0xb8000 as *mut _)},
+                column: 0,
+                buffer: BUFFER,
             }
         }
     }
@@ -149,8 +154,50 @@ pub mod vga {
     }
 
     impl VgaScreen {
+        pub fn write_str(&mut self, s: &[u8]) {
+            for byte in s {
+                self.write_byte(*byte);
+            }
+        }
+
+        pub fn clear_line(&mut self) {
+            for _ in self.column..BUFFER_WIDTH {
+                self.write_byte(b' ');
+            }
+            self.column = 0;
+        }
+
+        pub fn new_line(&mut self) {
+            // Move every line up one, top line is lost
+            for row in 1..BUFFER_HEIGHT {
+                for col in 0..BUFFER_WIDTH {
+                    unsafe {
+                        let prev = read_volatile(&(*self.buffer)[row][col]);
+                        write_volatile(&mut (*self.buffer)[row-1][col], prev);
+                    }
+                }
+            }
+            self.column = 0;
+            self.clear_line();
+        }
+
+        pub fn write_byte(&mut self, byte: u8) {
+            if self.column >= BUFFER_WIDTH {
+                self.new_line();
+            }
+            if byte == b'\n' {
+                self.new_line();
+            } else {
+                let ch = ScreenChar::new(byte, Color::LightGray, Color::Black);
+                self.write(ch, 0, self.column);
+                self.column += 1;
+            }
+        }
+
         pub fn write(&mut self, ch: ScreenChar, row: usize, col: usize) {
-            unsafe {core::ptr::write_volatile(&mut (*self.buffer)[row][col], ch)};
+            // Writing starts from the bottom left of the screen
+            let row = BUFFER_HEIGHT-row-1;
+            unsafe {write_volatile(&mut (*self.buffer)[row][col], ch)};
         }
     }
 }
