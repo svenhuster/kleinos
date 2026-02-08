@@ -138,7 +138,7 @@ pub mod x86_64 {
     pub unsafe fn outb(port: u16, value: u8) {
         // SAFETY: Caller needs to ensure guarantees are met
         unsafe {
-            core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nostack, preserves_flags));
         }
     }
 
@@ -152,7 +152,7 @@ pub mod x86_64 {
         let value: u8;
         // SAFETY: Caller needs to ensure guarantees are met
         unsafe {
-            core::arch::asm!("in al, dx", in("dx") port, out("al") value, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("in al, dx", in("dx") port, out("al") value, options(nostack, preserves_flags));
         }
         value
     }
@@ -176,7 +176,7 @@ pub mod qemu {
                 "jmp 2b",
                 in("dx") 0xf4u16,
                 in("eax") exit_code as u32,
-                options(nomem, nostack, noreturn),
+                options(nostack, noreturn),
             );
         }
     }
@@ -184,6 +184,23 @@ pub mod qemu {
 
 pub mod vga {
     use core::ptr::{read_volatile, write_volatile};
+
+    #[macro_export]
+    macro_rules! print {
+        ($($arg:tt)*) => ($crate::vga::_print(format_args!($($arg)*)));
+    }
+
+    #[macro_export]
+    macro_rules! println {
+        () => ($crate::print!("\n"));
+        ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+    }
+
+    #[doc(hidden)]
+    pub fn _print(args: core::fmt::Arguments) {
+        use core::fmt::Write;
+        SCREEN.lock().write_fmt(args).unwrap();
+    }
 
     #[derive(Clone, Copy)]
     #[repr(u8)]
