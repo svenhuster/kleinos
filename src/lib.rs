@@ -7,6 +7,10 @@
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
+pub mod qemu;
+pub mod serial;
+pub mod vga;
+
 use core::{
     cell::UnsafeCell,
     sync::atomic::{AtomicBool, Ordering},
@@ -162,47 +166,20 @@ pub mod x86_64 {
     }
 }
 
-pub mod qemu {
-    #[repr(u32)]
-    pub enum QemuExitCode {
-        Success = 0x10,
-        Failure = 0x11,
-    }
-
-    pub fn qemu_exit(exit_code: QemuExitCode) -> ! {
-        // SAFETY: 0xF4 is the port for QEMU exit.
-        // 'hlt' is safe to execute in ring 0.
-        unsafe {
-            core::arch::asm!(
-                "out dx, eax",
-                "cli",
-                "2: hlt",
-                "jmp 2b",
-                in("dx") 0xf4u16,
-                in("eax") exit_code as u32,
-                options(nostack, noreturn),
-            );
-        }
-    }
-}
-
-pub mod serial;
-pub mod vga;
-
 pub trait Testable {
     fn run(&self) -> ();
 }
 
 impl<T> Testable for T
-    where
-        T: Fn(),
-    {
-        fn run(&self) {
-            serial_print!("{}...\t", core::any::type_name::<T>());
-            self();
-            serial_println!("[ok]");
-        }
+where
+    T: Fn(),
+{
+    fn run(&self) {
+        serial_print!("{}...\t", core::any::type_name::<T>());
+        self();
+        serial_println!("[ok]");
     }
+}
 
 pub fn test_runner(tests: &[&dyn Testable]) {
     serial_println!("Running {} tests", tests.len());
@@ -228,6 +205,7 @@ bootloader::entry_point!(test_kernel_main);
 
 #[cfg(test)]
 fn test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
+    serial::PORT.lock().init();
     test_main();
     crate::qemu::qemu_exit(crate::qemu::QemuExitCode::Success);
 }
@@ -239,5 +217,4 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[cfg(test)]
-mod tests {
-}
+mod tests {}

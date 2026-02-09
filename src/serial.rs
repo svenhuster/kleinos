@@ -73,7 +73,7 @@ impl SerialPort {
 }
 
 impl core::fmt::Write for SerialPort {
-    // Only ASCII will be printed properly on the VGA screen
+    // Only ASCII will be printed properly on the serial port
     fn write_str(&mut self, s: &str) -> Result<(), core::fmt::Error> {
         for ch in s.chars() {
             if ch.is_ascii() {
