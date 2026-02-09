@@ -123,6 +123,7 @@ impl VgaScreen {
         if self.column >= BUFFER_WIDTH {
             self.new_line();
         }
+
         if byte == b'\n' {
             self.new_line();
         } else {
@@ -153,17 +154,55 @@ impl VgaScreen {
 
 #[macro_export]
 macro_rules! print {
-        ($($arg:tt)*) => ($crate::vga::_print(format_args!($($arg)*)));
-    }
+    ($($arg:tt)*) => ($crate::vga::_print(format_args!($($arg)*)));
+}
 
 #[macro_export]
 macro_rules! println {
-        () => ($crate::print!("\n"));
-        ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
-    }
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
 
 #[doc(hidden)]
 pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
     SCREEN.lock().write_fmt(args).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use core::ptr::read_volatile;
+
+    use crate::vga::{BUFFER_HEIGHT, SCREEN};
+
+    #[test_case]
+    fn test_println_simple() {
+        println!("test_println_simple output");
+    }
+
+    #[test_case]
+    fn test_println_many() {
+        for _ in 0..200 {
+            println!("test_println_many output");
+        }
+    }
+
+    #[test_case]
+    fn test_print_long() {
+        for _ in 0..200 {
+            print!("test_println_many output");
+        }
+    }
+
+    #[test_case]
+    fn test_println_output() {
+        // TODO: check for non-ascii chars
+        let s = "Some test string that fits on a single line";
+        println!("{}", s);
+        for (i, c) in s.chars().enumerate() {
+            let screen_char =
+                unsafe { read_volatile(&(*SCREEN.lock().buffer)[BUFFER_HEIGHT - 2][i]) };
+            assert_eq!(char::from(screen_char.character) as u8, c as u8);
+        }
+    }
 }

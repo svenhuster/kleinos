@@ -14,15 +14,6 @@ panic = "abort"
 debug = true
 split-debuginfo = "packed"
 
-[[bin]]
-name = "kleinos"
-test = true
-bench = false
-
-[lib]
-test = false
-bench = false
-
 [dependencies]
 bootloader = "0.9"
 

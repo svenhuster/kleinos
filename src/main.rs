@@ -60,7 +60,8 @@ mod tests {
     }
 
     impl<T> Testable for T
-    where T: Fn()
+    where
+        T: Fn(),
     {
         fn run(&self) {
             serial_print!("{}...\t", core::any::type_name::<T>());
