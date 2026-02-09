@@ -185,23 +185,6 @@ pub mod qemu {
 pub mod vga {
     use core::ptr::{read_volatile, write_volatile};
 
-    #[macro_export]
-    macro_rules! print {
-        ($($arg:tt)*) => ($crate::vga::_print(format_args!($($arg)*)));
-    }
-
-    #[macro_export]
-    macro_rules! println {
-        () => ($crate::print!("\n"));
-        ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
-    }
-
-    #[doc(hidden)]
-    pub fn _print(args: core::fmt::Arguments) {
-        use core::fmt::Write;
-        SCREEN.lock().write_fmt(args).unwrap();
-    }
-
     #[derive(Clone, Copy)]
     #[repr(u8)]
     pub enum Color {
@@ -351,5 +334,22 @@ pub mod vga {
             // ensured that we are within the correct memory region.
             unsafe { write_volatile(&mut (*self.buffer)[row][col], ch) };
         }
+    }
+
+    #[macro_export]
+    macro_rules! print {
+        ($($arg:tt)*) => ($crate::vga::_print(format_args!($($arg)*)));
+    }
+
+    #[macro_export]
+    macro_rules! println {
+        () => ($crate::print!("\n"));
+        ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+    }
+
+    #[doc(hidden)]
+    pub fn _print(args: core::fmt::Arguments) {
+        use core::fmt::Write;
+        SCREEN.lock().write_fmt(args).unwrap();
     }
 }

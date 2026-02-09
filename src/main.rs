@@ -3,6 +3,9 @@
 #![warn(clippy::missing_safety_doc)]
 #![warn(clippy::undocumented_unsafe_blocks)]
 #![warn(unsafe_op_in_unsafe_fn)]
+#![feature(custom_test_frameworks)]
+#![test_runner(crate::tests::test_runner)]
+#![reexport_test_harness_main = "test_main"]
 
 use core::panic::PanicInfo;
 use kleinos::qemu::{QemuExitCode, qemu_exit};
@@ -39,8 +42,34 @@ fn panic(info: &PanicInfo) -> ! {
 bootloader::entry_point!(kernel_main);
 
 pub fn kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
+    #[cfg(test)]
+    test_main();
+
     println!("Hello, Rustaceans!");
 
     busy_spin(100_000_000);
     qemu_exit(QemuExitCode::Success);
+}
+
+#[cfg(test)]
+mod tests {
+    use kleinos::{
+        print, println,
+        qemu::{QemuExitCode, qemu_exit},
+    };
+
+    pub fn test_runner(tests: &[&dyn Fn()]) {
+        println!("Running {} tests", tests.len());
+        for test in tests {
+            test();
+        }
+        qemu_exit(QemuExitCode::Success);
+    }
+
+    #[test_case]
+    fn trivial_assertion() {
+        print!("trivial assertion... ");
+        assert_eq!(1, 1);
+        println!("[ok]");
+    }
 }

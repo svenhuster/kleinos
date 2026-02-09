@@ -16,7 +16,7 @@ split-debuginfo = "packed"
 
 [[bin]]
 name = "kleinos"
-test = false
+test = true
 bench = false
 
 [lib]
