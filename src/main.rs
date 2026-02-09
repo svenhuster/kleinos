@@ -8,35 +8,32 @@
 #![reexport_test_harness_main = "test_main"]
 
 use core::panic::PanicInfo;
-use kleinos::qemu::{QemuExitCode, qemu_exit};
-use kleinos::vga::{Color, ColorCode, ScreenChar};
-use kleinos::x86_64;
-use kleinos::{busy_spin, println};
+use kleinos::{
+    busy_spin, println,
+    qemu::{QemuExitCode, qemu_exit},
+};
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // Check if the panic handler can acquire the lock to see if we paniced
-    // trying to write to the screen. Alternatively, just write a red '*' in the
-    // top left corner.
-    if let Some(screen) = kleinos::vga::SCREEN.try_lock() {
-        drop(screen);
-        println!("{}", info);
-    } else {
-        // SAFETY: 0xb8000 is the VGA text buffer, a fixed physical address that
-        // remains valid and mapped for the kernel's lifetime. We bypass the
-        // lock because the panic may have occurred while holding it. The task
-        // holding the lock will not be running again and the kernel will
-        // terminate.
-        unsafe {
-            let ch = ScreenChar {
-                character: b'*',
-                color: ColorCode::new(Color::Red, Color::Black),
-            };
-            core::ptr::write_volatile(0xb8000 as *mut ScreenChar, ch);
-        }
-    }
+    use core::fmt::Write;
 
-    x86_64::halt();
+    // Brute-force access to VGA to print panic message
+    let mut screen = kleinos::vga::VgaScreen::new();
+    write!(screen, "\nPANIC: {}", info).ok();
+    kleinos::x86_64::halt();
+}
+
+#[cfg(test)]
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    use core::fmt::Write;
+
+    // Brute-force access to serial to print panic message
+    let mut port = kleinos::serial::SerialPort::new();
+    write!(port, "[failed]\n").ok();
+    write!(port, "Error: {}\n", info).ok();
+    qemu_exit(QemuExitCode::Failure);
 }
 
 bootloader::entry_point!(kernel_main);
@@ -54,22 +51,34 @@ pub fn kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
 #[cfg(test)]
 mod tests {
     use kleinos::{
-        print, println,
         qemu::{QemuExitCode, qemu_exit},
+        serial_print, serial_println,
     };
 
-    pub fn test_runner(tests: &[&dyn Fn()]) {
-        println!("Running {} tests", tests.len());
+    pub trait Testable {
+        fn run(&self) -> ();
+    }
+
+    impl<T> Testable for T
+    where T: Fn()
+    {
+        fn run(&self) {
+            serial_print!("{}...\t", core::any::type_name::<T>());
+            self();
+            serial_println!("[ok]");
+        }
+    }
+
+    pub fn test_runner(tests: &[&dyn Testable]) {
+        serial_println!("Running {} tests", tests.len());
         for test in tests {
-            test();
+            test.run();
         }
         qemu_exit(QemuExitCode::Success);
     }
 
     #[test_case]
     fn trivial_assertion() {
-        print!("trivial assertion... ");
         assert_eq!(1, 1);
-        println!("[ok]");
     }
 }
