@@ -27,7 +27,15 @@ impl SerialPort {
     pub const fn new() -> Self {
         Self { base: COM1 }
     }
+}
 
+impl Default for SerialPort {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SerialPort {
     fn port(&self, reg: Register) -> u16 {
         self.base + reg as u16
     }

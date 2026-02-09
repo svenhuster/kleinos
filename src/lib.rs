@@ -4,7 +4,7 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 #![warn(unsafe_op_in_unsafe_fn)]
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::tests::test_runner)]
+#![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 use core::{
@@ -189,6 +189,40 @@ pub mod qemu {
 pub mod serial;
 pub mod vga;
 
+pub trait Testable {
+    fn run(&self) -> ();
+}
+
+impl<T> Testable for T
+    where
+        T: Fn(),
+    {
+        fn run(&self) {
+            serial_print!("{}...\t", core::any::type_name::<T>());
+            self();
+            serial_println!("[ok]");
+        }
+    }
+
+pub fn test_runner(tests: &[&dyn Testable]) {
+    serial_println!("Running {} tests", tests.len());
+    for test in tests {
+        test.run();
+    }
+    qemu::qemu_exit(qemu::QemuExitCode::Success);
+}
+
+pub fn test_panic_handler(info: &core::panic::PanicInfo) -> ! {
+    use crate::qemu::{QemuExitCode, qemu_exit};
+    use core::fmt::Write;
+
+    // Brute-force access to serial to print panic message
+    let mut port = crate::serial::SerialPort::new();
+    writeln!(port, "[failed]").ok();
+    writeln!(port, "Error: {}", info).ok();
+    qemu_exit(QemuExitCode::Failure);
+}
+
 #[cfg(test)]
 bootloader::entry_point!(test_kernel_main);
 
@@ -201,47 +235,9 @@ fn test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    self::tests::test_panic_handler(info)
+    test_panic_handler(info)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        qemu::{QemuExitCode, qemu_exit},
-        serial_print, serial_println,
-    };
-
-    pub trait Testable {
-        fn run(&self) -> ();
-    }
-
-    impl<T> Testable for T
-    where
-        T: Fn(),
-    {
-        fn run(&self) {
-            serial_print!("{}...\t", core::any::type_name::<T>());
-            self();
-            serial_println!("[ok]");
-        }
-    }
-
-    pub fn test_runner(tests: &[&dyn Testable]) {
-        serial_println!("Running {} tests", tests.len());
-        for test in tests {
-            test.run();
-        }
-        qemu_exit(QemuExitCode::Success);
-    }
-
-    pub fn test_panic_handler(info: &core::panic::PanicInfo) -> ! {
-        use crate::qemu::{QemuExitCode, qemu_exit};
-        use core::fmt::Write;
-
-        // Brute-force access to serial to print panic message
-        let mut port = crate::serial::SerialPort::new();
-        write!(port, "[failed]\n").ok();
-        write!(port, "Error: {}\n", info).ok();
-        qemu_exit(QemuExitCode::Failure);
-    }
 }
