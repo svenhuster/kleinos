@@ -12,7 +12,9 @@ enum Register {
     LineStatus = 5,
 }
 
-pub static PORT: crate::Mutex<SerialPort> = crate::Mutex::new(SerialPort::new());
+// SAFETY: SerialPort::new() creates a port handle for COM1 at 0x3F8,
+// which is a valid fixed address. The Mutex ensures exclusive access.
+pub static PORT: crate::Mutex<SerialPort> = crate::Mutex::new(unsafe { SerialPort::new() });
 
 pub struct SerialPort {
     base: u16,
@@ -24,25 +26,27 @@ pub struct SerialPort {
 unsafe impl Send for SerialPort {}
 
 impl SerialPort {
-    pub const fn new() -> Self {
+    /// Creates a new SerialPort for COM1.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure this is only used when the global `PORT` mutex
+    /// cannot be used (e.g., in panic handlers to avoid deadlock). The port
+    /// address 0x3F8 is always valid on x86, but `init()` must be called
+    /// before writing to configure the UART.
+    pub const unsafe fn new() -> Self {
         Self { base: COM1 }
     }
-}
 
-impl Default for SerialPort {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SerialPort {
     fn port(&self, reg: Register) -> u16 {
         self.base + reg as u16
     }
 
     pub fn init(&mut self) {
-        // TODO: add check if COM1 was detected at boot
-        // Maybe init should return a Result at that point
+        // TODO: add check if COM1 was detected at boot. Maybe init
+        // should return a Result at that point. Possible improvement
+        // to use the typestate pattern to ensure it's init before
+        // use. Might require OnceLock to allow for a global static.
 
         // SAFETY: Port I/O to 0x3F8-0x3FD is well-defined on x86. Accessing
         // non-existent hardware returns 0xFF on reads and is ignored on writes; it
@@ -59,7 +63,9 @@ impl SerialPort {
     }
 
     fn is_transmit_empty(&self) -> bool {
-        // SAFETY: Reading LSR is safe
+        // SAFETY: Reading LSR has no side-effects, is safe if COM1
+        // exists and no other process will read or write outside of
+        // the global static. Therefore, sequential access is guaranteed.
         unsafe { inb(self.port(Register::LineStatus)) & 0x20 != 0 }
     }
 
@@ -67,7 +73,10 @@ impl SerialPort {
         while !self.is_transmit_empty() {
             core::hint::spin_loop();
         }
-        // SAFETY: Writing to THR after checking LSR is safe
+        // SAFETY: Writing to THR at the DATA port is valid and the
+        // busy-wait on LSR ensures that it can accept data. No other
+        // process will write to the port outside of the global
+        // static, hence, the busy-wait guarantees sequential access.
         unsafe { outb(self.port(Register::Data), byte) };
     }
 }
@@ -100,5 +109,5 @@ macro_rules! serial_println {
 #[doc(hidden)]
 pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
-    PORT.lock().write_fmt(args).unwrap();
+    PORT.lock().write_fmt(args).expect("serial write failed");
 }

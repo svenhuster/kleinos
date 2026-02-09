@@ -22,6 +22,7 @@ pub fn busy_spin(iterations: usize) {
     }
 }
 
+// TODO: review when adding interrupts and/or changing the panic behaviour
 pub struct Mutex<T> {
     lock: AtomicBool,
     data: UnsafeCell<T>,
@@ -146,6 +147,8 @@ pub mod x86_64 {
     pub unsafe fn outb(port: u16, value: u8) {
         // SAFETY: Caller needs to ensure guarantees are met
         unsafe {
+            // Note: `nomem` intentionally omitted. Port I/O can trigger DMA or
+            // other memory side effects.
             core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nostack, preserves_flags));
         }
     }
@@ -160,6 +163,8 @@ pub mod x86_64 {
         let value: u8;
         // SAFETY: Caller needs to ensure guarantees are met
         unsafe {
+            // Note: `nomem` intentionally omitted. Port I/O can trigger DMA or
+            // other memory side effects.
             core::arch::asm!("in al, dx", in("dx") port, out("al") value, options(nostack, preserves_flags));
         }
         value
@@ -193,8 +198,11 @@ pub fn test_panic_handler(info: &core::panic::PanicInfo) -> ! {
     use crate::qemu::{QemuExitCode, qemu_exit};
     use core::fmt::Write;
 
-    // Brute-force access to serial to print panic message
-    let mut port = crate::serial::SerialPort::new();
+    // SAFETY: Creating a new SerialPort to avoid deadlock if the panic occurred
+    // while holding PORT's lock. The port address 0x3F8 is valid and init() is
+    // called immediately after to configure the UART.
+    let mut port = unsafe { crate::serial::SerialPort::new() };
+    port.init();
     writeln!(port, "[failed]").ok();
     writeln!(port, "Error: {}", info).ok();
     qemu_exit(QemuExitCode::Failure);

@@ -13,8 +13,13 @@ use kleinos::{
 fn panic(info: &core::panic::PanicInfo) -> ! {
     use core::fmt::Write;
 
-    // Brute-force access to VGA to print panic message
-    let mut screen = kleinos::vga::VgaScreen::new();
+    // SAFETY: Creating a new VGA screen with direct access to the VGA
+    // buffer. This is intentional to avoid deadlocking while waiting for the
+    // lock that might be held by the fn that just panicked. The buffer is
+    // identity-mapped to 0xb8000 by the bootloader, available in all CPU
+    // contexts and during the kernel's lifetime. Corrupting the display is
+    // acceptable during panic.
+    let mut screen = unsafe { kleinos::vga::VgaScreen::new() };
     write!(screen, "\nPANIC: {}", info).ok();
     kleinos::x86_64::halt();
 }

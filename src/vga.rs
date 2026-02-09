@@ -1,6 +1,12 @@
-use core::ptr::{read_volatile, write_volatile};
+//! VGA text mode driver for 80x25 display.
+//!
+//! Uses terminal-style coordinates where row 0 is the bottom of the screen.
+//! New text appears at the bottom and scrolls upward as lines are added.
+//! This matches typical terminal behavior (newest content at bottom).
 
-#[derive(Clone, Copy)]
+use core::ptr::{NonNull, read_volatile, write_volatile};
+
+#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum Color {
     Black = 0,
@@ -21,7 +27,7 @@ pub enum Color {
     White = 15,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
 pub struct ColorCode(u8);
 
@@ -32,7 +38,7 @@ impl ColorCode {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ScreenChar {
     pub character: u8,
@@ -48,52 +54,42 @@ const _: () = assert!(core::mem::offset_of!(ScreenChar, color) == 1);
 pub const BUFFER_HEIGHT: usize = 25;
 pub const BUFFER_WIDTH: usize = 80;
 
-pub static SCREEN: crate::Mutex<VgaScreen> = crate::Mutex::new(VgaScreen::new());
+// SAFETY: VgaScreen::new() creates a handle to the VGA buffer at
+// 0xb8000, which is identity-mapped by the bootloader. The Mutex
+// ensures exclusive access
+pub static SCREEN: crate::Mutex<VgaScreen> = crate::Mutex::new(unsafe { VgaScreen::new() });
 
+#[derive(Debug)]
 pub struct VgaScreen {
     column: usize,
     color_code: ColorCode,
-    buffer: *mut [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
+    buffer: NonNull<[[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT]>,
 }
 
-// SAFETY: VgaScreen contains a raw pointer to the VGA buffer at 0xb8000,
-// which is memory-mapped hardware at a fixed physical address. This
-// memory is accessible from any CPU context and remains valid for the
-// kernel's lifetime.
+// SAFETY: VgaScreen contains a raw pointer to the VGA buffer at
+// 0xb8000, which is identity-mapped by the bootloader. This memory is
+// accessible from any CPU context and remains valid for the kernel's
+// lifetime.
 unsafe impl Send for VgaScreen {}
 
 impl VgaScreen {
+    /// Creates a new VgaScreen with direct buffer access.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure this is only used when the global `SCREEN` mutex
+    /// cannot be used (e.g., in panic handlers to avoid deadlock). The VGA buffer
+    /// at 0xb8000 must be identity-mapped by the bootloader.
     #[must_use]
-    pub const fn new() -> Self {
+    pub const unsafe fn new() -> Self {
         Self {
             column: 0,
             color_code: ColorCode::new(Color::LightGray, Color::Black),
-            buffer: 0xb8000 as *mut _,
+            // SAFETY: 0xb8000 is a non-null fixed address for the VGA buffer.
+            buffer: unsafe { NonNull::new_unchecked(0xb8000 as *mut _) },
         }
     }
-}
 
-impl Default for VgaScreen {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl core::fmt::Write for VgaScreen {
-    // Only ASCII will be printed properly on the VGA screen
-    fn write_str(&mut self, s: &str) -> Result<(), core::fmt::Error> {
-        for ch in s.chars() {
-            if ch.is_ascii() {
-                self.write_byte(ch as u8);
-            } else {
-                self.write_byte(0xFE); // write the block char
-            }
-        }
-        Ok(())
-    }
-}
-
-impl VgaScreen {
     pub fn clear_line(&mut self) {
         for col in self.column..BUFFER_WIDTH {
             self.write(b' ', self.color_code, 0, col);
@@ -109,8 +105,8 @@ impl VgaScreen {
                 // ensure we are within the bounds of is memory region.
                 unsafe {
                     write_volatile(
-                        &mut (*self.buffer)[row - 1][col],
-                        read_volatile(&(*self.buffer)[row][col]),
+                        &mut (*self.buffer.as_ptr())[row - 1][col],
+                        read_volatile(&(*self.buffer.as_ptr())[row][col]),
                     );
                 }
             }
@@ -134,7 +130,7 @@ impl VgaScreen {
 
     pub fn write(&mut self, byte: u8, color: ColorCode, row: usize, col: usize) {
         if row >= BUFFER_HEIGHT || col >= BUFFER_WIDTH {
-            panic!("access to vga buffer out of bounds");
+            panic!("write access to vga buffer out of bounds");
         }
 
         // Writing starts from the bottom left of the screen
@@ -148,9 +144,39 @@ impl VgaScreen {
         // SAFETY: After initialization VgaScreen points to the VGA buffer
         // address. To get here the bounds check at the beginning of the fn
         // ensured that we are within the correct memory region.
-        unsafe { write_volatile(&mut (*self.buffer)[row][col], ch) };
+        unsafe { write_volatile(&mut (*self.buffer.as_ptr())[row][col], ch) };
+    }
+
+    #[cfg(test)]
+    fn read(&self, row: usize, col: usize) -> ScreenChar {
+        if row >= BUFFER_HEIGHT || col >= BUFFER_WIDTH {
+            panic!("read access to vga buffer out of bounds");
+        }
+
+        // Writing starts from the bottom left of the screen
+        let row = BUFFER_HEIGHT - row - 1;
+
+        // SAFETY: After initialization VgaScreen points to the VGA buffer
+        // address. To get here the bounds check at the beginning of the fn
+        // ensured that we are within the correct memory region.
+        unsafe { read_volatile(&(*self.buffer.as_ptr())[row][col]) }
     }
 }
+
+impl core::fmt::Write for VgaScreen {
+    // Only ASCII will be printed properly on the VGA screen
+    fn write_str(&mut self, s: &str) -> Result<(), core::fmt::Error> {
+        for ch in s.chars() {
+            if ch.is_ascii() {
+                self.write_byte(ch as u8);
+            } else {
+                self.write_byte(0xFE); // write the block char
+            }
+        }
+        Ok(())
+    }
+}
+
 
 #[macro_export]
 macro_rules! print {
@@ -166,14 +192,12 @@ macro_rules! println {
 #[doc(hidden)]
 pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
-    SCREEN.lock().write_fmt(args).unwrap();
+    SCREEN.lock().write_fmt(args).expect("VGA write failed");
 }
 
 #[cfg(test)]
 mod tests {
-    use core::ptr::read_volatile;
-
-    use crate::vga::{BUFFER_HEIGHT, SCREEN};
+    use super::*;
 
     #[test_case]
     fn test_println_simple() {
@@ -199,9 +223,10 @@ mod tests {
         // TODO: check for non-ascii chars
         let s = "Some test string that fits on a single line";
         println!("{}", s);
+
+        let screen = SCREEN.lock();
         for (i, c) in s.chars().enumerate() {
-            let screen_char =
-                unsafe { read_volatile(&(*SCREEN.lock().buffer)[BUFFER_HEIGHT - 2][i]) };
+            let screen_char = screen.read(1, i);
             assert_eq!(char::from(screen_char.character) as u8, c as u8);
         }
     }
