@@ -209,10 +209,10 @@ pub fn test_panic_handler(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[cfg(test)]
-bootloader::entry_point!(test_kernel_main);
+bootloader::entry_point!(lib_test_kernel_main);
 
 #[cfg(test)]
-fn test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
+fn lib_test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
     serial::PORT.lock().init();
     test_main();
     crate::qemu::qemu_exit(crate::qemu::QemuExitCode::Success);
