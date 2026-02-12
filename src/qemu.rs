@@ -5,17 +5,18 @@ pub enum QemuExitCode {
 }
 
 pub fn qemu_exit(exit_code: QemuExitCode) -> ! {
-    // SAFETY: 0xF4 is the port for QEMU exit.
-    // 'hlt' is safe to execute in ring 0.
+    use x86_64::instructions::port::Port;
+
+    let mut port = Port::new(0xf4);
+
+    // SAFETY: 0xf4 used above is the port configured for QEMU
+    // exit. If it was not configured, it would be ignored and we end
+    // up busy-spinning instead.
     unsafe {
-        core::arch::asm!(
-            "out dx, eax",
-            "cli",
-            "2: hlt",
-            "jmp 2b",
-            in("dx") 0xf4u16,
-            in("eax") exit_code as u32,
-            options(nostack, noreturn),
-        );
+        port.write(exit_code as u32);
+    };
+
+    loop {
+        core::hint::spin_loop();
     }
 }

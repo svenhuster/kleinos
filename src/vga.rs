@@ -5,6 +5,7 @@
 //! This matches typical terminal behavior (newest content at bottom).
 
 use core::ptr::{NonNull, read_volatile, write_volatile};
+use lazy_static::lazy_static;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -54,10 +55,15 @@ const _: () = assert!(core::mem::offset_of!(ScreenChar, color) == 1);
 pub const BUFFER_HEIGHT: usize = 25;
 pub const BUFFER_WIDTH: usize = 80;
 
-// SAFETY: VgaScreen::new() creates a handle to the VGA buffer at
-// 0xb8000, which is identity-mapped by the bootloader. The Mutex
-// ensures exclusive access
-pub static SCREEN: crate::Mutex<VgaScreen> = crate::Mutex::new(unsafe { VgaScreen::new() });
+lazy_static! {
+    pub static ref SCREEN: crate::Mutex<VgaScreen> = crate::Mutex::new(VgaScreen{
+        column: 0,
+        color_code: ColorCode::new(Color::LightGray, Color::Black),
+        // SAFETY: 0xb8000 is a non-null fixed address for the VGA
+        // buffer and mapped by the bootloader.
+        buffer: unsafe { NonNull::new_unchecked(0xb8000 as *mut _) },
+    });
+}
 
 #[derive(Debug)]
 pub struct VgaScreen {

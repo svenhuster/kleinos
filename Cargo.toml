@@ -16,6 +16,8 @@ split-debuginfo = "packed"
 
 [dependencies]
 bootloader = "0.9"
+lazy_static = { version = "1.5", features = ["spin_no_std"] }
+x86_64 = "0.15.4"
 
 [[bin]]
 name = "kleinos"
