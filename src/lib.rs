@@ -6,7 +6,9 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+#![feature(abi_x86_interrupt)]
 
+pub mod interrupts;
 pub mod qemu;
 pub mod serial;
 pub mod vga;
@@ -15,6 +17,10 @@ use core::{
     cell::UnsafeCell,
     sync::atomic::{AtomicBool, Ordering},
 };
+
+pub fn init() {
+    interrupts::init_idt();
+}
 
 pub fn busy_spin(iterations: usize) {
     for _ in 0..iterations {
@@ -214,6 +220,7 @@ bootloader::entry_point!(lib_test_kernel_main);
 #[cfg(test)]
 fn lib_test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
     serial::PORT.lock().init();
+    init();
     test_main();
     crate::qemu::qemu_exit(crate::qemu::QemuExitCode::Success);
 }
@@ -225,4 +232,9 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    #[test_case]
+    fn test_breakpoint_exceptions() {
+        x86_64::instructions::interrupts::int3();
+    }
+}

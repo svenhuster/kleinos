@@ -29,6 +29,9 @@ bootloader::entry_point!(kernel_main);
 pub fn kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
     println!("Hello, Rustaceans!");
 
-    busy_spin(100_000_000);
+    kleinos::init();
+    x86_64::instructions::interrupts::int3();
+
+    busy_spin(1_000_000_000);
     qemu_exit(QemuExitCode::Success);
 }
