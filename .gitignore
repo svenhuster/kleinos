@@ -22,3 +22,4 @@ target
 
 /.direnv
 /.envrc
+/.gdb_history

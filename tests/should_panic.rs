@@ -9,17 +9,16 @@ use core::panic::PanicInfo;
 use kleinos::{
     qemu::{QemuExitCode, qemu_exit},
     serial, serial_print, serial_println,
-    x86_64::halt,
 };
 
 entry_point!(test_kernel_main);
 
 fn test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
-    serial::PORT.lock().init();
+    serial::SERIAL1.lock().init();
     test_main();
-    // test_main will exit qemu but fn required -> ! which test_main
-    // is not
-    halt();
+    loop {
+        x86_64::instructions::hlt();
+    }
 }
 
 pub trait PanicTestable {

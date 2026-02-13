@@ -17,6 +17,6 @@ pub fn qemu_exit(exit_code: QemuExitCode) -> ! {
     };
 
     loop {
-        core::hint::spin_loop();
+        x86_64::instructions::hlt();
     }
 }

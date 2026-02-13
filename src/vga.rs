@@ -4,8 +4,20 @@
 //! New text appears at the bottom and scrolls upward as lines are added.
 //! This matches typical terminal behavior (newest content at bottom).
 
-use core::ptr::{NonNull, read_volatile, write_volatile};
+use core::ptr::{read_volatile, write_volatile};
 use lazy_static::lazy_static;
+use spin::Mutex;
+
+lazy_static! {
+    pub static ref SCREEN: Mutex<VgaScreen> = Mutex::new(VgaScreen{
+        column: 0,
+        color_code: ColorCode::new(Color::LightGray, Color::Black),
+        // SAFETY: 0xb8000 is identity-mapped by the bootloader and points to
+        // the VGA buffer. We are running in ring0 and have access to the
+        // buffer.
+        buffer: unsafe { &mut *(0xb8000 as *mut _)},
+    });
+}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -47,55 +59,24 @@ pub struct ScreenChar {
 }
 
 // Ensure ScreenChar layout matches the VGA buffer
-const _: () = assert!(core::mem::align_of::<ScreenChar>() == 1);
-const _: () = assert!(core::mem::size_of::<ScreenChar>() == 2);
-const _: () = assert!(core::mem::offset_of!(ScreenChar, character) == 0);
-const _: () = assert!(core::mem::offset_of!(ScreenChar, color) == 1);
+const _: () = {
+    assert!(core::mem::align_of::<ScreenChar>() == 1);
+    assert!(core::mem::size_of::<ScreenChar>() == 2);
+    assert!(core::mem::offset_of!(ScreenChar, character) == 0);
+    assert!(core::mem::offset_of!(ScreenChar, color) == 1);
+};
 
 pub const BUFFER_HEIGHT: usize = 25;
 pub const BUFFER_WIDTH: usize = 80;
-
-lazy_static! {
-    pub static ref SCREEN: crate::Mutex<VgaScreen> = crate::Mutex::new(VgaScreen{
-        column: 0,
-        color_code: ColorCode::new(Color::LightGray, Color::Black),
-        // SAFETY: 0xb8000 is a non-null fixed address for the VGA
-        // buffer and mapped by the bootloader.
-        buffer: unsafe { NonNull::new_unchecked(0xb8000 as *mut _) },
-    });
-}
 
 #[derive(Debug)]
 pub struct VgaScreen {
     column: usize,
     color_code: ColorCode,
-    buffer: NonNull<[[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT]>,
+    buffer: &'static mut [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
 }
 
-// SAFETY: VgaScreen contains a raw pointer to the VGA buffer at
-// 0xb8000, which is identity-mapped by the bootloader. This memory is
-// accessible from any CPU context and remains valid for the kernel's
-// lifetime.
-unsafe impl Send for VgaScreen {}
-
 impl VgaScreen {
-    /// Creates a new VgaScreen with direct buffer access.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure this is only used when the global `SCREEN` mutex
-    /// cannot be used (e.g., in panic handlers to avoid deadlock). The VGA buffer
-    /// at 0xb8000 must be identity-mapped by the bootloader.
-    #[must_use]
-    pub const unsafe fn new() -> Self {
-        Self {
-            column: 0,
-            color_code: ColorCode::new(Color::LightGray, Color::Black),
-            // SAFETY: 0xb8000 is a non-null fixed address for the VGA buffer.
-            buffer: unsafe { NonNull::new_unchecked(0xb8000 as *mut _) },
-        }
-    }
-
     pub fn clear_line(&mut self) {
         for col in self.column..BUFFER_WIDTH {
             self.write(b' ', self.color_code, 0, col);
@@ -106,13 +87,15 @@ impl VgaScreen {
         // Move every line up one, top line is lost
         for row in 1..BUFFER_HEIGHT {
             for col in 0..BUFFER_WIDTH {
-                // SAFETY: After initialization VgaScreen buffer points to
-                // the correct memory address for the VGA buffer. The loops
-                // ensure we are within the bounds of is memory region.
+                // SAFETY: After initialization VgaScreen buffer points to the
+                // correct memory address for the VGA buffer and we have access
+                // in ring0. The loop bounds ensure we are within the bounds of
+                // is memory region. Access to the buffer is managed via a Mutex
+                // to ensure that no race occurs.
                 unsafe {
                     write_volatile(
-                        &mut (*self.buffer.as_ptr())[row - 1][col],
-                        read_volatile(&(*self.buffer.as_ptr())[row][col]),
+                        &mut self.buffer[row - 1][col],
+                        read_volatile(&self.buffer[row][col]),
                     );
                 }
             }
@@ -148,9 +131,11 @@ impl VgaScreen {
         };
 
         // SAFETY: After initialization VgaScreen points to the VGA buffer
-        // address. To get here the bounds check at the beginning of the fn
-        // ensured that we are within the correct memory region.
-        unsafe { write_volatile(&mut (*self.buffer.as_ptr())[row][col], ch) };
+        // address and we have access in ring0. To get here the bounds check at
+        // the beginning of the fn ensured that we are within the correct memory
+        // region. Access to the buffer is managed via a Mutex to ensure that no
+        // race occurs.
+        unsafe { write_volatile(&mut self.buffer[row][col], ch) };
     }
 
     #[cfg(test)]
@@ -159,13 +144,15 @@ impl VgaScreen {
             panic!("read access to vga buffer out of bounds");
         }
 
-        // Writing starts from the bottom left of the screen
+        // Reading starts from the bottom left of the screen to match writing
         let row = BUFFER_HEIGHT - row - 1;
 
         // SAFETY: After initialization VgaScreen points to the VGA buffer
-        // address. To get here the bounds check at the beginning of the fn
-        // ensured that we are within the correct memory region.
-        unsafe { read_volatile(&(*self.buffer.as_ptr())[row][col]) }
+        // address and we have access in ring0. To get here the bounds check at
+        // the beginning of the fn ensured that we are within the correct memory
+        // region. Access to the buffer is managed via a Mutex to ensure that no
+        // race occurs.
+        unsafe { read_volatile(&self.buffer[row][col]) }
     }
 }
 
@@ -176,7 +163,7 @@ impl core::fmt::Write for VgaScreen {
             if ch.is_ascii() {
                 self.write_byte(ch as u8);
             } else {
-                self.write_byte(0xFE); // write the block char
+                self.write_byte(0xFE); // write the block char if not ASCII
             }
         }
         Ok(())

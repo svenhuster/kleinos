@@ -6,16 +6,17 @@
 
 use bootloader::entry_point;
 use core::panic::PanicInfo;
-use kleinos::{serial, x86_64::halt};
+use kleinos::serial;
 
 entry_point!(test_kernel_main);
 
 fn test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
-    serial::PORT.lock().init();
+    serial::SERIAL1.lock().init();
     test_main();
-    // test_main will exit qemu but fn required -> ! which test_main
-    // is not
-    halt();
+
+    loop {
+        x86_64::instructions::hlt();
+    }
 }
 
 #[panic_handler]
