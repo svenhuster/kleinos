@@ -1,13 +1,28 @@
-use crate::{gdt, hlt_loop, println};
+use crate::{gdt, hlt_loop, print, println};
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use spin::Mutex;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
-pub const PIC_1_OFFSET: u8 = 32 + 0;
+pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = 32 + 8;
 
-// SAFETY: PICs are chained and at contiguous offsets starting at PIC_1_OFFSET
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum InterruptIndex {
+    Timer = PIC_1_OFFSET,
+    Keyboard = PIC_1_OFFSET + 1,
+}
+
+impl InterruptIndex {
+    fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+// SAFETY: PICs are chained and at contiguous offsets starting at
+// PIC_1_OFFSET. We access through ring 0 and only via this static protected by
+// a Mutex, hence, no race can occur.
 pub static PICS: Mutex<ChainedPics> =
     Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
@@ -24,6 +39,7 @@ lazy_static! {
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX)
         };
         idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
+        idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
         idt
     };
 }
@@ -48,21 +64,53 @@ extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    crate::print!(".");
+    print!(".");
+
+    // SAFETY: the PICS are configured during initialization to the correct
+    // ports. We run in ring 0 and the access is protected via the Mutex to
+    // ensure no races.
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum InterruptIndex {
-    Timer = PIC_1_OFFSET,
-}
+extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    use pc_keyboard::{DecodedKey, HandleControl, Keyboard, ScancodeSet1, layouts};
+    use spin::Mutex;
+    use x86_64::instructions::port::Port;
 
-impl InterruptIndex {
-    fn as_u8(self) -> u8 {
-        self as u8
+    lazy_static! {
+        static ref KEYBOARD: Mutex<Keyboard<layouts::Us104Key, ScancodeSet1>> =
+            Mutex::new(Keyboard::new(
+                ScancodeSet1::new(),
+                layouts::Us104Key,
+                HandleControl::Ignore
+            ));
+    }
+
+    let mut keyboard = KEYBOARD.lock();
+    let mut port = Port::new(0x60);
+
+    // SAFETY: The port is configured during init and we are running in ring 0
+    // ensuring access. Reading the keyboard port has the only sideeffect of
+    // allowing the irq again on EOI.
+    let scancode: u8 = unsafe { port.read() };
+
+    if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
+        if let Some(key) = keyboard.process_keyevent(key_event) {
+            match key {
+                DecodedKey::Unicode(character) => print!("{}", character),
+                DecodedKey::RawKey(key) => print!("{:?}", key),
+            }
+        }
+    }
+
+    // SAFETY: the PICS are configured during initialization to the correct
+    // ports. We run in ring 0 and the access is protected via the Mutex to
+    // ensure no races.
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
 }

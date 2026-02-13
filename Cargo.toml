@@ -17,6 +17,7 @@ split-debuginfo = "packed"
 [dependencies]
 bootloader = "0.9"
 lazy_static = { version = "1.5", features = ["spin_no_std"] }
+pc-keyboard = "0.8"
 pic8259 = "0.11"
 spin = "0.10"
 uart_16550 = "0.4"
