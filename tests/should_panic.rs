@@ -7,6 +7,7 @@
 use bootloader::entry_point;
 use core::panic::PanicInfo;
 use kleinos::{
+    hlt_loop,
     qemu::{QemuExitCode, qemu_exit},
     serial, serial_print, serial_println,
 };
@@ -16,9 +17,7 @@ entry_point!(test_kernel_main);
 fn test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
     serial::SERIAL1.lock().init();
     test_main();
-    loop {
-        x86_64::instructions::hlt();
-    }
+    hlt_loop();
 }
 
 pub trait PanicTestable {

@@ -17,11 +17,22 @@ pub mod vga;
 pub fn init() {
     gdt::init();
     interrupts::init();
+    // SAFETY: The chained PICS are created at the correct offsets and
+    // we are running in ring 0 and, hence, access is safe.
+    unsafe { interrupts::PICS.lock().initialize() };
+
+    x86_64::instructions::interrupts::enable();
 }
 
 pub fn busy_spin(iterations: usize) {
     for _ in 0..iterations {
         core::hint::spin_loop();
+    }
+}
+
+pub fn hlt_loop() -> ! {
+    loop {
+        x86_64::instructions::hlt();
     }
 }
 
@@ -63,10 +74,12 @@ bootloader::entry_point!(lib_test_kernel_main);
 
 #[cfg(test)]
 fn lib_test_kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
+    use crate::qemu::qemu_exit;
+
     serial::SERIAL1.lock().init();
     init();
     test_main();
-    crate::qemu::qemu_exit(crate::qemu::QemuExitCode::Success);
+    qemu_exit(crate::qemu::QemuExitCode::Success);
 }
 
 #[cfg(test)]

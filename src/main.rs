@@ -4,15 +4,12 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 #![warn(unsafe_op_in_unsafe_fn)]
 
-use kleinos::println;
+use kleinos::{hlt_loop, println};
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     println!("\nPANIC: {}", info);
-
-    loop {
-        x86_64::instructions::hlt();
-    }
+    hlt_loop();
 }
 
 bootloader::entry_point!(kernel_main);
@@ -23,7 +20,5 @@ pub fn kernel_main(_boot_info: &'static bootloader::BootInfo) -> ! {
     kleinos::init();
     println!("Kernel init complete");
 
-    loop {
-        x86_64::instructions::hlt();
-    }
+    hlt_loop();
 }

@@ -184,7 +184,10 @@ macro_rules! println {
 #[doc(hidden)]
 pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
-    SCREEN.lock().write_fmt(args).expect("VGA write failed");
+    use x86_64::instructions::interrupts;
+    interrupts::without_interrupts(|| {
+        SCREEN.lock().write_fmt(args).expect("VGA write failed");
+    });
 }
 
 #[cfg(test)]
