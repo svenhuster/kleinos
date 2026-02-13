@@ -27,6 +27,10 @@ name = "kleinos"
 test = false
 bench = false
 
+[[test]]
+name = "stack_overflow"
+harness = false
+
 [package.metadata.bootimage]
 run-args = ["-accel", "kvm", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-s", "-serial", "stdio"]
 test-args = ["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-serial", "stdio", "-display", "none"]
