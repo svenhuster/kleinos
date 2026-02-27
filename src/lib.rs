@@ -17,9 +17,6 @@ pub mod vga;
 pub fn init() {
     gdt::init();
     interrupts::init();
-    // SAFETY: The chained PICS are created at the correct offsets and
-    // we are running in ring 0 and, hence, access is safe.
-    unsafe { interrupts::PICS.lock().initialize() };
 
     x86_64::instructions::interrupts::enable();
 }

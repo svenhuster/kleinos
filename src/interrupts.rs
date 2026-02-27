@@ -46,6 +46,14 @@ lazy_static! {
 
 pub fn init() {
     IDT.load();
+
+    // SAFETY: The chained PICS are created at the correct offsets and
+    // we are running in ring 0 and, hence, access is safe.
+    unsafe { PICS.lock().initialize() };
+}
+
+extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
+    println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
 }
 
 extern "x86-interrupt" fn double_fault_handler(
@@ -56,11 +64,8 @@ extern "x86-interrupt" fn double_fault_handler(
         "EXCEPTION: DOUBLE FAULT\nError code: {}\n{:#?}",
         error_code, stack_frame
     );
-    hlt_loop();
-}
 
-extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-    println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
+    hlt_loop();
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
@@ -89,20 +94,22 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
             ));
     }
 
-    let mut keyboard = KEYBOARD.lock();
-    let mut port = Port::new(0x60);
-
-    // SAFETY: The port is configured during init and we are running in ring 0
-    // ensuring access. Reading the keyboard port has the only sideeffect of
-    // allowing the irq again on EOI.
-    let scancode: u8 = unsafe { port.read() };
-
-    if let Ok(Some(key_event)) = keyboard.add_byte(scancode)
-        && let Some(key) = keyboard.process_keyevent(key_event)
     {
-        match key {
-            DecodedKey::Unicode(character) => print!("{}", character),
-            DecodedKey::RawKey(key) => print!("{:?}", key),
+        let mut keyboard = KEYBOARD.lock();
+        let mut port = Port::new(0x60);
+
+        // SAFETY: The port is configured above and we are running in ring 0
+        // ensuring access. Reading the keyboard port has the only sideeffect of
+        // allowing the irq again on EOI.
+        let scancode: u8 = unsafe { port.read() };
+
+        if let Ok(Some(key_event)) = keyboard.add_byte(scancode)
+            && let Some(key) = keyboard.process_keyevent(key_event)
+        {
+            match key {
+                DecodedKey::Unicode(character) => print!("{}", character),
+                DecodedKey::RawKey(key) => print!("{:?}", key),
+            }
         }
     }
 
