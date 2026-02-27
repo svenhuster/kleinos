@@ -4,19 +4,23 @@
 //! New text appears at the bottom and scrolls upward as lines are added.
 //! This matches typical terminal behavior (newest content at bottom).
 
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::write_volatile;
 use lazy_static::lazy_static;
 use spin::Mutex;
 
 lazy_static! {
-    pub static ref SCREEN: Mutex<VgaScreen> = Mutex::new(VgaScreen{
-        column: 0,
-        color_code: ColorCode::new(Color::LightGray, Color::Black),
-        // SAFETY: 0xb8000 is identity-mapped by the bootloader and points to
-        // the VGA buffer. We are running in ring0 and have access to the
-        // buffer.
-        buffer: unsafe { &mut *(0xb8000 as *mut _)},
-    });
+    pub static ref SCREEN: Mutex<VgaScreen> = {
+        let default_color = ColorCode::new(Color::LightGray, Color::Black);
+        Mutex::new(VgaScreen{
+            column: 0,
+            color_code: default_color,
+            // SAFETY: 0xb8000 is identity-mapped by the bootloader and points to
+            // the VGA buffer. We are running in ring0 and have access to the
+            // buffer.
+            buffer: unsafe { &mut *(0xb8000 as *mut _)},
+            shadow: [[ScreenChar{character: b' ', color: default_color}; BUFFER_WIDTH]; BUFFER_HEIGHT],
+        })
+    };
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,9 +78,21 @@ pub struct VgaScreen {
     column: usize,
     color_code: ColorCode,
     buffer: &'static mut [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
+    shadow: [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
 }
 
 impl VgaScreen {
+    pub fn flush(&mut self) {
+        // SAFETY: After initialization VgaScreen buffer points to the correct
+        // memory address for the VGA buffer (identify-mapped by the bootloader)
+        // and we have access in ring0. The loop bounds ensure we are within the
+        // bounds of is memory region. Access to the buffer is managed via a
+        // Mutex. The shadow buffer is the same size and type as the buffer.
+        unsafe {
+            write_volatile(self.buffer, self.shadow);
+        }
+    }
+
     pub fn clear_line(&mut self) {
         for col in self.column..BUFFER_WIDTH {
             self.write(b' ', self.color_code, 0, col);
@@ -85,21 +101,7 @@ impl VgaScreen {
 
     pub fn new_line(&mut self) {
         // Move every line up one, top line is lost
-        for row in 1..BUFFER_HEIGHT {
-            for col in 0..BUFFER_WIDTH {
-                // SAFETY: After initialization VgaScreen buffer points to the
-                // correct memory address for the VGA buffer and we have access
-                // in ring0. The loop bounds ensure we are within the bounds of
-                // is memory region. Access to the buffer is managed via a Mutex
-                // to ensure that no race occurs.
-                unsafe {
-                    write_volatile(
-                        &mut self.buffer[row - 1][col],
-                        read_volatile(&self.buffer[row][col]),
-                    );
-                }
-            }
-        }
+        self.shadow.copy_within(1.., 0);
         self.column = 0;
         self.clear_line();
     }
@@ -130,12 +132,7 @@ impl VgaScreen {
             color,
         };
 
-        // SAFETY: After initialization VgaScreen points to the VGA buffer
-        // address and we have access in ring0. To get here the bounds check at
-        // the beginning of the fn ensured that we are within the correct memory
-        // region. Access to the buffer is managed via a Mutex to ensure that no
-        // race occurs.
-        unsafe { write_volatile(&mut self.buffer[row][col], ch) };
+        self.shadow[row][col] = ch;
     }
 
     #[cfg(test)]
@@ -147,12 +144,7 @@ impl VgaScreen {
         // Reading starts from the bottom left of the screen to match writing
         let row = BUFFER_HEIGHT - row - 1;
 
-        // SAFETY: After initialization VgaScreen points to the VGA buffer
-        // address and we have access in ring0. To get here the bounds check at
-        // the beginning of the fn ensured that we are within the correct memory
-        // region. Access to the buffer is managed via a Mutex to ensure that no
-        // race occurs.
-        unsafe { read_volatile(&self.buffer[row][col]) }
+        self.shadow[row][col]
     }
 }
 
@@ -186,7 +178,9 @@ pub fn _print(args: core::fmt::Arguments) {
     use core::fmt::Write;
     use x86_64::instructions::interrupts;
     interrupts::without_interrupts(|| {
-        SCREEN.lock().write_fmt(args).expect("VGA write failed");
+        let mut vga = SCREEN.lock();
+        vga.write_fmt(args).expect("VGA write failed");
+        vga.flush();
     });
 }
 
