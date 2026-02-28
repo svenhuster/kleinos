@@ -84,8 +84,6 @@ extern "x86-interrupt" fn double_fault_handler(
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    print!(".");
-
     // SAFETY: the PICS are configured during initialization to the correct
     // ports. We run in ring 0 and the access is protected via the Mutex to
     // ensure no races.
