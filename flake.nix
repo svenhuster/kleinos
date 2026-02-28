@@ -44,7 +44,6 @@
       devShells.${system}.default = pkgs.mkShell {
         buildInputs = [
           toolchain
-          pkgs.pkg-config
           pkgs.cargo-bootimage
           pkgs.qemu
           pkgs.gdb
